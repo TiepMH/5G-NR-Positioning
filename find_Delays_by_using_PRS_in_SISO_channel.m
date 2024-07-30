@@ -276,7 +276,7 @@ gNBs_from_closest_one = gNBs_from_closest_one(1:3);
 plotPRSCorr(corrs, SampleRate);
 
 %% Display results
-disp(['Distances: ', num2str(distances)]);
+disp(['Distances (in meters): ', num2str(distances)]);
 disp(['Actual delays (in samples) : ', num2str(delays_in_samples)]);
 disp(['Estimated delays (in samples) : ', num2str(delays_est)]);
 disp(['3 closest gNBs (to be estimated) : ', num2str(gNBs_from_closest_one)]);
