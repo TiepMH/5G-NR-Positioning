@@ -1,6 +1,6 @@
 clear all; clc;
 
-n_TxAnt = 2; % number of Tx antennas
+n_TxAnt = 4; % number of Tx antennas
 n_RxAnt = 1; % number of Rx antennas
 n_gNBs = 4; % number of gNBs
 
@@ -183,7 +183,7 @@ for idx=1:n_gNBs
 end
 
 %% Plot PRS and data resource grids, wrt 1st Tx antenna
-plot_PRS_and_PDSCH_grids(PRS_grids_1st_TxAnt, data_grids_1st_TxAnt)
+% plot_PRS_and_PDSCH_grids(PRS_grids_1st_TxAnt, data_grids_1st_TxAnt)
 
 %% Positions of gNBs in (x,y,z)-coordinate system
 % UE position
@@ -219,6 +219,35 @@ for idx = 1:n_gNBs
     PLs{idx} = PL;
 end
 
+%% Delays in the LOS path
+LightSpeed = physconst('LightSpeed');
+delays_in_samples = zeros(1,n_gNBs);
+for idx = 1:n_gNBs
+   distance = distances(idx);
+   delay_in_seconds = distance/LightSpeed; % Delay of the i-th gNB in seconds
+   delay_in_samples = round(delay_in_seconds*SampleRate); % Delay of the i-th gNB in samples
+   delays_in_samples(idx) = delay_in_samples; % Store this value
+end
+
+% Find the maximum delay in samples
+delay_max = max(delays_in_samples);
+
+%% MIMO Channel Configuration with both the LoS and NLOS components
+channel = nrTDLChannel;
+channel.DelayProfile = 'Custom'; % NOTE: We use this mode for Rician fading
+channel.FadingDistribution = 'Rician'; % Consider both LoS and NLOS components
+% First tap (LoS): Rician with K-factor 15 dB, average path gain 0 dB, and 0 delay
+% Second tap (NLoS): Rayleigh with average path gain −11 dB, and 45e-7 (seconds) path delay
+% Third tap (NLoS): Rayleigh with average path gain −14 dB, and 55e-7 (seconds) path delay
+channel.KFactorFirstTap = 15; % in dB
+channel.AveragePathGains = [0, -11, -14]; % [LoS gain, NLOS-1 gain, NLOS-2 gain] in dB
+channel.PathDelays = [0, 45e-7, 55e-7]; % [0 for LoS, delay due to NLOS-1, delay due to NLOS-2] in dB
+% Consider MIMO channel
+channel.NumTransmitAntennas = n_TxAnt; % number of Tx antennas
+channel.NumReceiveAntennas = n_RxAnt; % number of Rx antennas
+% Set channel sample rate
+channel.SampleRate = OFDM_Info.SampleRate;
+
 %% On the Tx side:
 txWaveform = cell(1,n_gNBs);
 for idx = 1:n_gNBs
@@ -233,47 +262,31 @@ end
 % Calculate the length of the transmitted samples
 length_of_transmitted_samples = length(txWaveform{1});
 
-%% Delays
-LightSpeed = physconst('LightSpeed');
-delays_in_samples = zeros(1,n_gNBs);
-for idx = 1:n_gNBs
-   distance = distances(idx);
-   delay_in_seconds = distance/LightSpeed; % Delay of the i-th gNB in seconds
-   delay_in_samples = round(delay_in_seconds*SampleRate); % Delay of the i-th gNB in samples
-   delays_in_samples(idx) = delay_in_samples; % Store this value
-end
-
-% Find the maximum delay in samples
-delay_max = max(delays_in_samples);
+disp(['size of txWaveform{idx}: ', num2str(size(txWaveform{1}))]);
 
 %% On the Rx side:
 length_of_received_samples = length_of_transmitted_samples + delay_max;
-rxWaveform_from_TxAnts = zeros(length_of_received_samples, n_TxAnt);
+rxWaveform = zeros(length_of_received_samples, n_RxAnt);
 for idx = 1:n_gNBs
     % Calculate path loss for each (gNB, UE) pair
     PL = PLs{idx};
     % Delay of the i-th gNB in samples
     delay_in_samples = delays_in_samples(idx);
 
-    % Let's consider the contribution from a specific gNB:
-    % First, delay the transmitted samples  
-    % Second, take the path loss into account
-    contribution_from_gNB_i = (1/sqrt(PL))*[zeros(delay_in_samples, n_TxAnt); 
-                                            txWaveform{idx}; ...
-                                            zeros(delay_max - delay_in_samples, n_TxAnt)
-                                            ];
+    % Take the time delay into account
+    txWaveform{idx} = [zeros(delay_in_samples, n_TxAnt); 
+                       txWaveform{idx}; ...
+                       zeros(delay_max - delay_in_samples, n_TxAnt)
+                       ];
+
+    % Transmission through a MIMO channel under the impact of path loss & multipath fading
+    rxWaveform_from_gNB_i = (1/sqrt(PL))*channel(txWaveform{idx});
 
     % Sum up all the contributions from all gNBs
-    rxWaveform_from_TxAnts = rxWaveform_from_TxAnts + contribution_from_gNB_i;   
+    rxWaveform = rxWaveform + rxWaveform_from_gNB_i;   
 end
 
-rxWaveform = zeros(length_of_received_samples, 1);
-for tx = 1:n_TxAnt
-    % Sum up all the contributions from all Tx antennas at the unique Rx antenna
-    rxWaveform = rxWaveform + rxWaveform_from_TxAnts(:, tx);
-end
-
-size(rxWaveform)
+disp(['size of rxWaveform{idx}: ', num2str(size(rxWaveform))]);
 
 %% Estimate time delays
 corrs = cell(1,n_gNBs);
