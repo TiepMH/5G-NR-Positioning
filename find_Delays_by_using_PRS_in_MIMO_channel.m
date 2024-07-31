@@ -315,10 +315,12 @@ for idx = 1:n_gNBs
 
 end
 
+% There is no need to consider SNR_gNB_i in N0_normalized, ...
+% ... because SNR_gNB_i has ALREADY been taken into account PREVIOUSLY.
+N0_normalized = 1/sqrt(n_RxAnt*Nfft);
 % Generate AWGN
-N0_normalized = 1/sqrt(n_RxAnt*Nfft); % SNR_gNB_i has been taken into account
-noise = complex(randn(size(rxWaveform)), ...
-                randn(size(rxWaveform)));
+noise = N0_normalized*complex(randn(size(rxWaveform)), ...
+                              randn(size(rxWaveform)));
 
 % Final received waveform at a certain gNB
 rxWaveform = rxWaveform + noise;
