@@ -7,6 +7,4 @@ In the **downlink**:
 ---
 In the **uplink**:
 - Sounding reference signal (SRS)
-  + for SISO channel: ...
-  + for MIMO channel: ...
-  + 
+  + for MIMO channel: see ``find_Delays_by_using_SRS_in_MIMO_channel.m``
