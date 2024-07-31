@@ -72,6 +72,9 @@ PDSCH = repmat(PDSCH,1,n_gNBs);
 n_Frames = 1; % each frame is 10 ms long
 total_Slots = n_Frames*SlotsPerFrame;
 
+% Total number of resource blocks
+n_ResourceBlocks = carriers(1).NSizeGrid;
+
 %% PRS resource grid
 PRS_grids = cell(1,n_gNBs); % to store the resultant PRS grids for gNBs 
 slots_containing_PRS_symbols = []; % to identify which slots contain PRS symbols
@@ -183,7 +186,7 @@ for idx=1:n_gNBs
 end
 
 %% Plot PRS and data resource grids, wrt 1st Tx antenna
-% plot_PRS_and_PDSCH_grids(PRS_grids_1st_TxAnt, data_grids_1st_TxAnt)
+plot_PRS_and_PDSCH_grids(PRS_grids_1st_TxAnt, data_grids_1st_TxAnt)
 
 %% Positions of gNBs in (x,y,z)-coordinate system
 % UE position
@@ -206,17 +209,18 @@ end
 PathLoss = nrPathLossConfig;
 PathLoss.Scenario = 'Uma';
 fc = 3e9;    % Carrier frequency (Hz)
+PLs_dB = cell(1, n_gNBs);
 PLs = cell(1, n_gNBs);
 for idx = 1:n_gNBs
     % Calculate path loss for each gNB and UE pair
     line_of_sight = true; % There is the line of sight (LOS) component
-    PLdB = nrPathLoss(PathLoss, fc, ...
+    PL_dB_gNB_i = nrPathLoss(PathLoss, fc, ...
                       line_of_sight, ...
                       reshape(gNB_pos{idx},3,1), ...
                       reshape(UE_pos,3,1) ...
                       );
-    PL = 10^(PLdB/10);
-    PLs{idx} = PL;
+    PLs_dB{idx} = PL_dB_gNB_i;
+    PLs{idx} = 10^(PL_dB_gNB_i/10);
 end
 
 %% Delays in the LOS path
@@ -248,6 +252,27 @@ channel.NumReceiveAntennas = n_RxAnt; % number of Rx antennas
 % Set channel sample rate
 channel.SampleRate = OFDM_Info.SampleRate;
 
+%% Signal-to-noise ratio (SNR in dB)
+% Transmit power
+Tx_power_dBm = 70; % Power (in dBm) delivered to all the Tx antennas for the fully-allocated grid 
+Tx_power_dB = Tx_power_dBm - 30;
+
+
+SNRdB_gNBs = cell(1, n_gNBs);
+for idx = 1:n_gNBs
+    % Path loss in dB, between the UE and the 1-st gNB
+    PL_dB_gNB_i = PLs_dB{idx};
+
+    % SNR_dB per (resource element and receive antenna) is calculated as:
+    % NOTE: This SNR calculation has ALREADY included the impact of path loss
+    SNRdB_gNB_i = SNRdB_inclusive_of_PathLoss_per_RE_and_RxAntenna(Tx_power_dB, ...
+                                                                   PL_dB_gNB_i, ...
+                                                                   n_ResourceBlocks, ...
+                                                                   Nfft, ...
+                                                                   SampleRate);
+    SNRdB_gNBs{idx} = SNRdB_gNB_i; % Store this value
+end
+
 %% On the Tx side:
 txWaveform = cell(1,n_gNBs);
 for idx = 1:n_gNBs
@@ -268,8 +293,11 @@ disp(['size of txWaveform{idx}: ', num2str(size(txWaveform{1}))]);
 length_of_received_samples = length_of_transmitted_samples + delay_max;
 rxWaveform = zeros(length_of_received_samples, n_RxAnt);
 for idx = 1:n_gNBs
-    % Calculate path loss for each (gNB, UE) pair
-    PL = PLs{idx};
+    % SNR from SNRdB, wrt the i-th gNB
+    SNRdB_gNB_i = SNRdB_gNBs{idx};
+    SNR_gNB_i = 10^(SNRdB_gNB_i/10); % This is per resource element & Rx antenna
+    % NOTE: This SNR has ALREADY included the impact of path loss
+
     % Delay of the i-th gNB in samples
     delay_in_samples = delays_in_samples(idx);
 
@@ -279,12 +307,21 @@ for idx = 1:n_gNBs
                        zeros(delay_max - delay_in_samples, n_TxAnt)
                        ];
 
-    % Transmission through a MIMO channel under the impact of path loss & multipath fading
-    rxWaveform_from_gNB_i = (1/sqrt(PL))*channel(txWaveform{idx});
+    % Transmission through a MIMO channel under the impact of multipath fading
+    rxWaveform_from_gNB_i = sqrt(SNR_gNB_i)*channel(txWaveform{idx});
 
     % Sum up all the contributions from all gNBs
     rxWaveform = rxWaveform + rxWaveform_from_gNB_i;   
+
 end
+
+% Generate AWGN
+N0_normalized = 1/sqrt(n_RxAnt*Nfft); % SNR_gNB_i has been taken into account
+noise = complex(randn(size(rxWaveform)), ...
+                randn(size(rxWaveform)));
+
+% Final received waveform at a certain gNB
+rxWaveform = rxWaveform + noise;
 
 disp(['size of rxWaveform{idx}: ', num2str(size(rxWaveform))]);
 
@@ -493,4 +530,26 @@ function plotPRSCorr(corrs, SampleRate)
     xlabel('Sample');
     ylabel('Absolute Value');
 
+end
+
+function SNR_dB = SNRdB_inclusive_of_PathLoss_per_RE_and_RxAntenna(Tx_power_dB, PL_dB, ...
+                                                                   n_ResourceBlocks, Nfft, ...
+                                                                   SampleRate)
+    % Reference: https://www.mathworks.com/help/5g/ug/include-path-loss-in-nr-link-level-simulations.html
+    % Transmit power
+    Tx_power_in_Watts = 10^(Tx_power_dB/10);
+    % Path loss
+    PL = 10^(PL_dB/10);
+    % Average receive power (including path loss) per resource element and per Rx antenna
+    S_per = (Tx_power_in_Watts/PL) * (Nfft^2) / (12*n_ResourceBlocks);
+    % ACTUAL noise amplitude N0 per Rx antenna
+    kBoltz = physconst('Boltzmann');
+    Temperature = 350; % Kelvin
+    N0_actual = sqrt(kBoltz*SampleRate*Temperature/2); % ACTUAL noise amplitude
+    % Average noise per resource element and per Rx antenna
+    N_per = 2*(N0_actual^2)*Nfft;
+    % SNR per resource element and per Rx antenna
+    SNR = S_per/N_per;
+    % Convert SNR to SNRdB
+    SNR_dB = 10*log10(SNR);
 end
