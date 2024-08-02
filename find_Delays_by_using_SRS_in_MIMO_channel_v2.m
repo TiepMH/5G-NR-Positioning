@@ -142,13 +142,13 @@ end
 
 %% MIMO Channel Configuration with both the LoS and NLOS components
 channels = cell(1, n_gNBs);
-Will_TxWaveForm_be_delayed_manually_later = true;
+Do_we_delay_TxWaveForm_manually = true;
 for idx=1:n_gNBs
     delay_LOS_in_seconds = delays_LOS_in_seconds(idx);
     delay_NLOS_in_seconds = delays_NLOS_in_seconds(idx);
     channels{idx} = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
                                   delay_LOS_in_seconds, delay_NLOS_in_seconds, ...
-                                  Will_TxWaveForm_be_delayed_manually_later);
+                                  Do_we_delay_TxWaveForm_manually);
 end
 
 
@@ -245,7 +245,7 @@ end
 
 function channel = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
                                  delay_LOS_in_seconds, delay_NLOS_in_seconds, ...
-                                 Will_TxWaveForm_be_delayed_manually_later)
+                                 Do_we_delay_TxWaveForm_manually)
     channel = nrTDLChannel;
     channel.DelayProfile = 'Custom'; % NOTE: We use this mode for Rician fading
     channel.FadingDistribution = 'Rician'; % Consider both LoS and NLOS components
@@ -253,7 +253,7 @@ function channel = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
     % Second tap (NLoS-1): Rayleigh with average path gain −6 dB, and path delay = delay_NLOS_in_seconds 
     channel.KFactorFirstTap = 15; % in dB
     channel.AveragePathGains = [0, -6]; % [LoS gain, NLOS-1 gain] in dB
-    if Will_TxWaveForm_be_delayed_manually_later
+    if Do_we_delay_TxWaveForm_manually
         % Relative time delays
         channel.PathDelays = [0, delay_NLOS_in_seconds - delay_LOS_in_seconds]; % [for LoS, for NLOS-1]
         % NOTE: 
