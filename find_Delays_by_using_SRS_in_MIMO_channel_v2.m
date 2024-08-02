@@ -119,7 +119,7 @@ for idx = 1:n_gNBs
     PLs_dB{idx} = PL_dB;
 end
 
-%% Delays in the LOS path
+%% Delays wrt the LOS and NLOS paths
 LightSpeed = physconst('LightSpeed');
 delays_LOS_in_seconds = zeros(1,n_gNBs);
 delays_LOS_in_samples = zeros(1,n_gNBs);
@@ -127,12 +127,12 @@ delays_NLOS_in_seconds = zeros(1,n_gNBs);
 delays_NLOS_in_samples = zeros(1,n_gNBs);
 for idx = 1:n_gNBs
    distance = distances(idx);
-   % Delays in the LOS paths
+   % Delays wrt the LOS paths
    delay_LOS_in_seconds = distance/LightSpeed; % Delay of the i-th gNB in seconds
    delays_LOS_in_seconds(idx) = delay_LOS_in_seconds; % Store this value
    delay_LOS_in_samples = round(delay_LOS_in_seconds*SampleRate); % Delay of the i-th gNB in samples
    delays_LOS_in_samples(idx) = delay_LOS_in_samples; % Store this value
-   % Delays in the NLOS paths
+   % Delays wrt the NLOS paths
    delay_NLOS_in_seconds = (sqrt(sum(abs(UE_pos - scatter_pos{idx}).^2)) ...
                             + sqrt(sum(abs(scatter_pos{idx} - gNB_pos{idx}).^2))) / LightSpeed;
    delays_NLOS_in_seconds(idx) = delay_NLOS_in_seconds; 
