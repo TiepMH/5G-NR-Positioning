@@ -194,16 +194,35 @@ UE_pos = [500 -20 1.8]; % 1.5m <= UE height <= 22.5m for 'UMa' path loss scenari
                        % see TR 38.901 Table 7.4.1-1
 % Positions of gNBs
 % height=25m for 'UMa' path loss scenario, see TR 38.901 Table 7.4.1-1 
-gNB_pos{1} = 1e3*[2,    -5,    0.0250]; 
-gNB_pos{2} = 1e3*[3,     4,    0.0250];
-gNB_pos{3} = 1e3*[-6,    8,    0.0250];
-gNB_pos{4} = 1e3*[-9,   -1,    0.0250];
+gNBs_pos{1} = 1e3*[2,    -5,    0.0250]; 
+gNBs_pos{2} = 1e3*[3,     4,    0.0250];
+gNBs_pos{3} = 1e3*[-6,    8,    0.0250];
+gNBs_pos{4} = 1e3*[-9,   -1,    0.0250];
+
+% For each gNB, there is a single nearby scatter.
+n_scatters = 1;
+azRange = -180:180;
+elRange = -90:90;
+for idx=1:n_gNBs
+    randAzOrder = randperm(length(azRange));
+    randElOrder = randperm(length(elRange));
+    azAngInSph = azRange(randAzOrder(1:n_scatters));
+    elAngInSph = elRange(randElOrder(1:n_scatters));
+    radius_temp = 1e3;            % radius - a temporary variable
+    [x_temp,y_temp,z_temp] = sph2cart(deg2rad(azAngInSph),deg2rad(elAngInSph),radius_temp);
+    % Find all scatters associated with gNB_i 
+    scatters_pos{idx} = [x_temp,y_temp,z_temp] + (0.5*UE_pos + 0.5*gNBs_pos{idx}); %#ok
+end
 
 % Distances from gNBs to UE
 distances = zeros(1,n_gNBs);
 for idx=1:n_gNBs
-    distances(idx) = sqrt(sum(abs(gNB_pos{idx}-UE_pos).^2));
+    distances(idx) = sqrt(sum(abs(gNBs_pos{idx}-UE_pos).^2));
 end
+
+%% Plot the scene
+plot_system(UE_pos, gNBs_pos, scatters_pos)
+view(2)
 
 %% Path Loss Configuration
 PathLoss = nrPathLossConfig;
@@ -216,41 +235,47 @@ for idx = 1:n_gNBs
     line_of_sight = true; % There is the line of sight (LOS) component
     PL_dB_gNB_i = nrPathLoss(PathLoss, fc, ...
                       line_of_sight, ...
-                      reshape(gNB_pos{idx},3,1), ...
+                      reshape(gNBs_pos{idx},3,1), ...
                       reshape(UE_pos,3,1) ...
                       );
     PLs_dB{idx} = PL_dB_gNB_i;
     PLs{idx} = 10^(PL_dB_gNB_i/10);
 end
 
-%% Delays in the LOS path
+%% Delays wrt the LOS and NLOS paths
 LightSpeed = physconst('LightSpeed');
-delays_in_samples = zeros(1,n_gNBs);
+delays_LOS_in_seconds = zeros(1,n_gNBs);
+delays_LOS_in_samples = zeros(1,n_gNBs);
+delays_NLOS_in_seconds = zeros(1,n_gNBs);
+delays_NLOS_in_samples = zeros(1,n_gNBs);
 for idx = 1:n_gNBs
    distance = distances(idx);
-   delay_in_seconds = distance/LightSpeed; % Delay of the i-th gNB in seconds
-   delay_in_samples = round(delay_in_seconds*SampleRate); % Delay of the i-th gNB in samples
-   delays_in_samples(idx) = delay_in_samples; % Store this value
+   % Delays wrt the LOS paths
+   delay_LOS_in_seconds = distance/LightSpeed; % Delay of the i-th gNB in seconds
+   delays_LOS_in_seconds(idx) = delay_LOS_in_seconds; % Store this value
+   delay_LOS_in_samples = round(delay_LOS_in_seconds*SampleRate); % Delay of the i-th gNB in samples
+   delays_LOS_in_samples(idx) = delay_LOS_in_samples; % Store this value
+   % Delays wrt the NLOS paths
+   delay_NLOS_in_seconds = (sqrt(sum(abs(UE_pos - scatters_pos{idx}).^2)) ...
+                            + sqrt(sum(abs(scatters_pos{idx} - gNBs_pos{idx}).^2))) / LightSpeed;
+   delays_NLOS_in_seconds(idx) = delay_NLOS_in_seconds; 
+   delay_NLOS_in_samples = round(delay_NLOS_in_seconds*SampleRate); 
+   delays_NLOS_in_samples(idx) = delay_NLOS_in_samples; 
 end
 
 % Find the maximum delay in samples
-delay_max = max(delays_in_samples);
+delay_max = max(delays_LOS_in_samples);
 
 %% MIMO Channel Configuration with both the LoS and NLOS components
-channel = nrTDLChannel;
-channel.DelayProfile = 'Custom'; % NOTE: We use this mode for Rician fading
-channel.FadingDistribution = 'Rician'; % Consider both LoS and NLOS components
-% First tap (LoS): Rician with K-factor 15 dB, average path gain 0 dB, and 0 delay
-% Second tap (NLoS): Rayleigh with average path gain −11 dB, and 45e-7 (seconds) path delay
-% Third tap (NLoS): Rayleigh with average path gain −14 dB, and 55e-7 (seconds) path delay
-channel.KFactorFirstTap = 15; % in dB
-channel.AveragePathGains = [0, -11, -14]; % [LoS gain, NLOS-1 gain, NLOS-2 gain] in dB
-channel.PathDelays = [0, 45e-7, 55e-7]; % [0 for LoS, delay due to NLOS-1, delay due to NLOS-2] in dB
-% Consider MIMO channel
-channel.NumTransmitAntennas = n_TxAnt; % number of Tx antennas
-channel.NumReceiveAntennas = n_RxAnt; % number of Rx antennas
-% Set channel sample rate
-channel.SampleRate = OFDM_Info.SampleRate;
+channels = cell(1, n_gNBs);
+Do_we_delay_TxWaveForm_manually = true;
+for idx=1:n_gNBs
+    delay_LOS_in_seconds = delays_LOS_in_seconds(idx);
+    delay_NLOS_in_seconds = delays_NLOS_in_seconds(idx);
+    channels{idx} = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
+                                  delay_LOS_in_seconds, delay_NLOS_in_seconds, ...
+                                  Do_we_delay_TxWaveForm_manually);
+end
 
 %% Signal-to-noise ratio (SNR in dB)
 % Transmit power
@@ -299,16 +324,17 @@ for idx = 1:n_gNBs
     % NOTE: This SNR has ALREADY included the impact of path loss
 
     % Delay of the i-th gNB in samples
-    delay_in_samples = delays_in_samples(idx);
+    delay_LOS_in_samples = delays_LOS_in_samples(idx);
 
     % Take the time delay into account
-    txWaveform{idx} = [zeros(delay_in_samples, n_TxAnt); 
+    txWaveform{idx} = [zeros(delay_LOS_in_samples, n_TxAnt); 
                        txWaveform{idx}; ...
-                       zeros(delay_max - delay_in_samples, n_TxAnt)
+                       zeros(delay_max - delay_LOS_in_samples, n_TxAnt)
                        ];
 
     % Transmission through a MIMO channel under the impact of multipath fading
-    rxWaveform_from_gNB_i = sqrt(SNR_gNB_i)*channel(txWaveform{idx});
+    channel_i = channels{idx};
+    rxWaveform_from_gNB_i = sqrt(SNR_gNB_i)*channel_i(txWaveform{idx});
 
     % Sum up all the contributions from all gNBs
     rxWaveform = rxWaveform + rxWaveform_from_gNB_i;   
@@ -317,7 +343,7 @@ end
 
 % There is no need to consider SNR_gNB_i in N0_normalized, ...
 % ... because SNR_gNB_i has ALREADY been taken into account PREVIOUSLY.
-N0_normalized = 1/sqrt(n_RxAnt*Nfft); 
+N0_normalized = 1/sqrt(n_RxAnt*Nfft);
 % Generate AWGN
 noise = N0_normalized*complex(randn(size(rxWaveform)), ...
                               randn(size(rxWaveform)));
@@ -358,12 +384,101 @@ plotPRSCorr(corrs, SampleRate);
 
 %% Display results
 disp(['Distances (in meters): ', num2str(distances)]);
-disp(['Actual delays (in samples) : ', num2str(delays_in_samples)]);
+disp(['Actual delays (in samples) : ', num2str(delays_LOS_in_samples)]);
 disp(['Estimated delays (in samples) : ', num2str(delays_est)]);
 disp(['3 closest gNBs (to be estimated) : ', num2str(gNBs_from_closest_one)]);
 
 
 %% Functions
+function SNR_dB = SNRdB_inclusive_of_PathLoss_per_RE_and_RxAntenna(Tx_power_dB, PL_dB, ...
+                                                                   n_ResourceBlocks, Nfft, ...
+                                                                   SampleRate)
+    % Reference: https://www.mathworks.com/help/5g/ug/include-path-loss-in-nr-link-level-simulations.html
+    % Transmit power
+    Tx_power_in_Watts = 10^(Tx_power_dB/10);
+    % Path loss
+    PL = 10^(PL_dB/10);
+    % Average receive power (including path loss) per resource element and per Rx antenna
+    S_per = (Tx_power_in_Watts/PL) * (Nfft^2) / (12*n_ResourceBlocks);
+    % ACTUAL noise amplitude N0 per Rx antenna
+    kBoltz = physconst('Boltzmann');
+    Temperature = 350; % Kelvin
+    N0_actual = sqrt(kBoltz*SampleRate*Temperature/2); % ACTUAL noise amplitude
+    % Average noise per resource element and per Rx antenna
+    N_per = 2*(N0_actual^2)*Nfft;
+    % SNR per resource element and per Rx antenna
+    SNR = S_per/N_per;
+    % Convert SNR to SNRdB
+    SNR_dB = 10*log10(SNR);
+end
+
+function channel = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
+                                 delay_LOS_in_seconds, delay_NLOS_in_seconds, ...
+                                 Do_we_delay_TxWaveForm_manually)
+    channel = nrTDLChannel;
+    channel.DelayProfile = 'Custom'; % NOTE: We use this mode for Rician fading
+    channel.FadingDistribution = 'Rician'; % Consider both LoS and NLOS components
+    % First tap (LoS): Rician with K-factor 15 dB, path gain 0 dB, and path delay = delay_LOS_in_seconds
+    % Second tap (NLoS-1): Rayleigh with average path gain −6 dB, and path delay = delay_NLOS_in_seconds 
+    channel.KFactorFirstTap = 15; % in dB
+    channel.AveragePathGains = [0, -6]; % [LoS gain, NLOS-1 gain] in dB
+    if Do_we_delay_TxWaveForm_manually
+        % Relative time delays
+        channel.PathDelays = [0, delay_NLOS_in_seconds - delay_LOS_in_seconds]; % [for LoS, for NLOS-1]
+        % NOTE: 
+        % In this case, Tx waveform will be delayed manually before applying the channel() function.
+        % For example, txWaveform = [11, 22, 33], delay_LOS = 2 samples
+        % We have to modify txWaveform into txWaveform = [0, 0, 11, 22, 33]
+        % before using the command: txWaveform = channel(txWaveform);
+    else
+        % Exact time delays
+        channel.PathDelays = [delay_LOS_in_seconds, delay_NLOS_in_seconds]; % [for LoS, for NLOS-1]
+        % NOTE:
+        % In this case, we do not need to delay the transmitted sequence manually.
+        % However, when we write: txWaveform = channel(txWaveform);
+        % the output and the input ALWAYS have the same size ==>> the same length.
+        % Having the same length is a drawback!!!
+        % When there is no difference in length, the impact of time delay is NOT visually apparent, ...
+        % ... making the code harder to interpret.
+        % Additionally, extending the length of txWaveform in the main code will be incorrect.
+    end
+    % Consider MIMO channel
+    channel.NumTransmitAntennas = n_TxAnt; % number of Tx antennas
+    channel.NumReceiveAntennas = n_RxAnt; % number of Rx antennas
+    % Set channel sample rate
+    channel.SampleRate = SampleRate;
+    %
+    MaximumChannelDelay = info(channel).MaximumChannelDelay;
+end
+
+function plot_system(UE_pos, gNBs_pos, scatters_pos)
+n_gNBs = numel(gNBs_pos);
+figure
+fig_UE = plot3(UE_pos(1),UE_pos(2),UE_pos(3),'k^',LineWidth=3);
+hold on;
+for idx=1:n_gNBs
+    fig_gNBs(idx) = scatter3(gNBs_pos{idx}(1),gNBs_pos{idx}(2),gNBs_pos{idx}(3),'rs',LineWidth=3); %#ok
+    hold on;
+    fig_scatters(idx) = plot3(scatters_pos{idx}(1),scatters_pos{idx}(2),scatters_pos{idx}(3),'kx',LineWidth=2); %#ok
+    hold on;
+    fig_LOS_paths(idx) = plot3([UE_pos(1) gNBs_pos{idx}(1)], ...
+                               [UE_pos(2) gNBs_pos{idx}(2)], ...
+                               [UE_pos(3) gNBs_pos{idx}(3)], ...
+                               'k'); %#ok
+    hold on;
+    fig_NLOS_paths(idx) = plot3([UE_pos(1) scatters_pos{idx}(1) gNBs_pos{idx}(1) scatters_pos{idx}(1)], ...
+                                [UE_pos(2) scatters_pos{idx}(2) gNBs_pos{idx}(2) scatters_pos{idx}(2)], ...
+                                [UE_pos(3) scatters_pos{idx}(3) gNBs_pos{idx}(3) scatters_pos{idx}(3)], ...
+                                'k--'); %#ok
+end
+xlabel('x-axis (m)')
+ylabel('y-axis (m)')
+zlabel('z-axis (m)')
+legend([fig_UE, fig_gNBs(1), fig_scatters(1), fig_LOS_paths(1), fig_NLOS_paths(1)], ...
+       {'UE','gNB','Scatter','LOS path','NLOS path'}, ...
+       'Location', 'bestoutside');
+end
+
 function plot_PRS_and_PDSCH_grids(PRS_grids, data_grids)
     PRS_grids_many_gNBs = zeros(size(PRS_grids{1})); % initialize a grid with background=0
     data_grids_many_gNBs = zeros(size(data_grids{1})); % initialize a grid with background=0
@@ -532,26 +647,4 @@ function plotPRSCorr(corrs, SampleRate)
     xlabel('Sample');
     ylabel('Absolute Value');
 
-end
-
-function SNR_dB = SNRdB_inclusive_of_PathLoss_per_RE_and_RxAntenna(Tx_power_dB, PL_dB, ...
-                                                                   n_ResourceBlocks, Nfft, ...
-                                                                   SampleRate)
-    % Reference: https://www.mathworks.com/help/5g/ug/include-path-loss-in-nr-link-level-simulations.html
-    % Transmit power
-    Tx_power_in_Watts = 10^(Tx_power_dB/10);
-    % Path loss
-    PL = 10^(PL_dB/10);
-    % Average receive power (including path loss) per resource element and per Rx antenna
-    S_per = (Tx_power_in_Watts/PL) * (Nfft^2) / (12*n_ResourceBlocks);
-    % ACTUAL noise amplitude N0 per Rx antenna
-    kBoltz = physconst('Boltzmann');
-    Temperature = 350; % Kelvin
-    N0_actual = sqrt(kBoltz*SampleRate*Temperature/2); % ACTUAL noise amplitude
-    % Average noise per resource element and per Rx antenna
-    N_per = 2*(N0_actual^2)*Nfft;
-    % SNR per resource element and per Rx antenna
-    SNR = S_per/N_per;
-    % Convert SNR to SNRdB
-    SNR_dB = 10*log10(SNR);
 end
