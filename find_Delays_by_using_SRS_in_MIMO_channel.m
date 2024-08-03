@@ -218,8 +218,6 @@ for idx=1:n_gNBs
 end
 
 %% Estimate time delays
-% Let's consider the time delay estimation at the 1-st gNB
-
 % CROSS-CORRELATION is used to estimate the time delay:
 % In particular, we cross-correlate the input waveform and the reference waveform
 % The input waveform is the 1st parameter
@@ -330,7 +328,7 @@ for idx=1:n_gNBs
     fig_NLOS_paths(idx) = plot3([UE_pos(1) scatters_pos{idx}(1) gNBs_pos{idx}(1) scatters_pos{idx}(1)], ...
                                 [UE_pos(2) scatters_pos{idx}(2) gNBs_pos{idx}(2) scatters_pos{idx}(2)], ...
                                 [UE_pos(3) scatters_pos{idx}(3) gNBs_pos{idx}(3) scatters_pos{idx}(3)], ...
-                                'k--'); %#ok
+                                'k:'); %#ok
 end
 xlabel('x-axis (m)')
 ylabel('y-axis (m)')
