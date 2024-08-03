@@ -7,6 +7,7 @@ n_gNBs = 4; % number of gNBs = number of receivers
 %% Carriers
 % Create UE/carrier configuration
 carrier = nrCarrierConfig;
+SubcarrierSpacing = carrier.SubcarrierSpacing;
 
 OFDM_Info = nrOFDMInfo(carrier);
 Nfft = OFDM_Info.Nfft;
@@ -73,12 +74,9 @@ for slot_k = 0:total_Slots-1
 end % looping-over-slots ends
 
 %% Plot SRS resource grid, wrt 1st Tx antenna (i.e., wrt 1st antenna of UE)
-figure
-imagesc(abs(SRS_grid(:,:,1)));
-title('Resource Grid for SRS (for the 1st antenna of UE)');
-xlabel('OFDM symbol');
-ylabel('Subcarrier');
-axis xy
+SRS_grid_1st_antenna = SRS_grid(:, :, 1);
+plot_SRS_grid(SRS_grid_1st_antenna)
+
 
 %% Positions of gNBs in (x,y,z)-coordinate system
 % UE position
@@ -86,22 +84,35 @@ UE_pos = [500 -20 1.8]; % 1.5m <= UE height <= 22.5m for 'UMa' path loss scenari
                        % see TR 38.901 Table 7.4.1-1
 % Positions of gNBs
 % height=25m for 'UMa' path loss scenario, see TR 38.901 Table 7.4.1-1 
-gNB_pos{1} = 1e3*[2,    -5,    0.0250]; 
-gNB_pos{2} = 1e3*[3,     4,    0.0250];
-gNB_pos{3} = 1e3*[-6,    8,    0.0250];
-gNB_pos{4} = 1e3*[-9,   -1,    0.0250];
+gNBs_pos{1} = 1e3*[2,    -5,    0.0250]; 
+gNBs_pos{2} = 1e3*[3,     4,    0.0250];
+gNBs_pos{3} = 1e3*[-6,    8,    0.0250];
+gNBs_pos{4} = 1e3*[-7,   -3,    0.0250];
 
 % For each gNB, there is a single nearby scatter.
-scatter_pos{1} = 1e3*[1.9,    -5.2,    0.01];
-scatter_pos{2} = 1e3*[2.9,    4.1,    0.01];
-scatter_pos{3} = 1e3*[-6.2,    8.1,    0.01];
-scatter_pos{4} = 1e3*[-8.8,    -1.5,    0.01];
+n_scatters = 1;
+azRange = -180:180;
+elRange = -90:90;
+for idx=1:n_gNBs
+    randAzOrder = randperm(length(azRange));
+    randElOrder = randperm(length(elRange));
+    azAngInSph = azRange(randAzOrder(1:n_scatters));
+    elAngInSph = elRange(randElOrder(1:n_scatters));
+    radius_temp = 1e3;            % radius - a temporary variable
+    [x_temp,y_temp,z_temp] = sph2cart(deg2rad(azAngInSph),deg2rad(elAngInSph),radius_temp);
+    % Find all scatters associated with gNB_i 
+    scatters_pos{idx} = [x_temp,y_temp,z_temp] + (0.5*UE_pos + 0.5*gNBs_pos{idx}); %#ok
+end
 
 % Distances from gNBs to UE
 distances = zeros(1,n_gNBs);
 for idx=1:n_gNBs
-    distances(idx) = sqrt(sum(abs(gNB_pos{idx}-UE_pos).^2));
+    distances(idx) = sqrt(sum(abs(gNBs_pos{idx}-UE_pos).^2));
 end
+
+%% Plot the scene
+plot_system(UE_pos, gNBs_pos, scatters_pos)
+view(2)
 
 %% Path Loss Configuration
 PathLoss = nrPathLossConfig;
@@ -113,7 +124,7 @@ for idx = 1:n_gNBs
     line_of_sight = true; % There is the line of sight (LOS) component
     PL_dB = nrPathLoss(PathLoss, fc, ...
                       line_of_sight, ...
-                      reshape(gNB_pos{idx},3,1), ...
+                      reshape(gNBs_pos{idx},3,1), ...
                       reshape(UE_pos,3,1) ...
                       );
     PLs_dB{idx} = PL_dB;
@@ -133,8 +144,8 @@ for idx = 1:n_gNBs
    delay_LOS_in_samples = round(delay_LOS_in_seconds*SampleRate); % Delay of the i-th gNB in samples
    delays_LOS_in_samples(idx) = delay_LOS_in_samples; % Store this value
    % Delays wrt the NLOS paths
-   delay_NLOS_in_seconds = (sqrt(sum(abs(UE_pos - scatter_pos{idx}).^2)) ...
-                            + sqrt(sum(abs(scatter_pos{idx} - gNB_pos{idx}).^2))) / LightSpeed;
+   delay_NLOS_in_seconds = (sqrt(sum(abs(UE_pos - scatters_pos{idx}).^2)) ...
+                            + sqrt(sum(abs(scatters_pos{idx} - gNBs_pos{idx}).^2))) / LightSpeed;
    delays_NLOS_in_seconds(idx) = delay_NLOS_in_seconds; 
    delay_NLOS_in_samples = round(delay_NLOS_in_seconds*SampleRate); 
    delays_NLOS_in_samples(idx) = delay_NLOS_in_samples; 
@@ -210,6 +221,12 @@ rxWaveform_at_gNB1 = rxWaveform_at_gNB1 + noise;
                                 rxWaveform_at_gNB1, ...
                                 SRS_grid);
 
+% Ignore noisy side lobe peaks
+corrs{1} = mag(1:(Nfft*SubcarrierSpacing/15));
+
+% Plot PRS correlation results
+plot_correlations(corrs);
+
 %% Display results
 % size(txWaveform)
 % 
@@ -218,6 +235,7 @@ rxWaveform_at_gNB1 = rxWaveform_at_gNB1 + noise;
 disp(['Actual delay (in samples) between the UE and the 1-st gNB: ', num2str(delays_LOS_in_samples(1))]);
 
 disp(['Estimated delay (in samples) between the UE and the 1-st gNB: ', num2str(offset)]);
+
 
 
 %% Functions
@@ -281,4 +299,116 @@ function channel = ChannelObject(n_TxAnt, n_RxAnt, SampleRate, ...
     %
     % channel.TransmissionDirection = 'Uplink'; % no need
     MaximumChannelDelay = info(channel).MaximumChannelDelay;
+end
+
+function plot_system(UE_pos, gNBs_pos, scatters_pos)
+n_gNBs = numel(gNBs_pos);
+figure
+fig_UE = plot3(UE_pos(1),UE_pos(2),UE_pos(3),'k^',LineWidth=3);
+hold on;
+for idx=1:n_gNBs
+    fig_gNBs(idx) = scatter3(gNBs_pos{idx}(1),gNBs_pos{idx}(2),gNBs_pos{idx}(3),'rs',LineWidth=3); %#ok
+    hold on;
+    fig_scatters(idx) = plot3(scatters_pos{idx}(1),scatters_pos{idx}(2),scatters_pos{idx}(3),'kx',LineWidth=2); %#ok
+    hold on;
+    fig_LOS_paths(idx) = plot3([UE_pos(1) gNBs_pos{idx}(1)], ...
+                               [UE_pos(2) gNBs_pos{idx}(2)], ...
+                               [UE_pos(3) gNBs_pos{idx}(3)], ...
+                               'k'); %#ok
+    hold on;
+    fig_NLOS_paths(idx) = plot3([UE_pos(1) scatters_pos{idx}(1) gNBs_pos{idx}(1) scatters_pos{idx}(1)], ...
+                                [UE_pos(2) scatters_pos{idx}(2) gNBs_pos{idx}(2) scatters_pos{idx}(2)], ...
+                                [UE_pos(3) scatters_pos{idx}(3) gNBs_pos{idx}(3) scatters_pos{idx}(3)], ...
+                                'k--'); %#ok
+end
+xlabel('x-axis (m)')
+ylabel('y-axis (m)')
+zlabel('z-axis (m)')
+legend([fig_UE, fig_gNBs(1), fig_scatters(1), fig_LOS_paths(1), fig_NLOS_paths(1)], ...
+       {'UE','gNB','Scatter','LOS path','NLOS path'}, ...
+       'Location', 'bestoutside');
+end
+
+function plot_SRS_grid(SRS_grid)
+    num_colors = 1 + 1; % background + color for SRS
+    my_legends = [{' '}, 'SRS from UE']; % background + SRS
+
+    % uisetcolor is a color picker
+    % define the colormap by a 3-column matrix of RGB
+    cmap = jet(num_colors);
+    cmap(1,:) = [1 1 1]; % white background 
+    cmap(2,:) = [0 0 1]; % blue color for SRS from UE 1
+    % cmap(3,:) = [0 1 0]; % green color for SRS from UE 2
+    % cmap(4,:) = [1 0 1]; % magenta color for SRS from UE 3
+    % cmap(5,:) = [0 1 1]; % cyan color for SRS from UE 4
+    % cmap(6,:) = [1 0.4 0.2]; % orange color for SRS from UE 5
+
+    % SRS grid
+    grid_of_abs_values_for_SRS = abs(SRS_grid);
+    grid_of_abs_values_for_SRS(grid_of_abs_values_for_SRS ~= 0) = 1; % background=0
+    
+    %
+    figure
+    imagesc(grid_of_abs_values_for_SRS);
+    colormap(cmap(1:2,:));
+    hold on
+    %
+    L = line(ones(num_colors),ones(num_colors), 'LineWidth',2); 
+    set(L,{'color'},mat2cell(cmap(1:end,:),ones(1,num_colors),3)); 
+    legend([L(2)], my_legends(2)); % L(1) is background. L(2) is SRS
+    %
+    title('Resource Grid for SRS (for the 1st antenna of UE)');
+    xlabel('OFDM symbol');
+    ylabel('Subcarrier');
+    axis xy
+end
+
+function plot_correlations(corrs)
+    n_gNBs = numel(corrs);
+    num_colors = 1 + n_gNBs; % background + colors for gNBs
+
+    % uisetcolor is a color picker
+    % define the colormap by a 3-column matrix of RGB
+    cmap = jet(num_colors);
+    cmap(1,:) = [1 1 1]; % white background for prsGrid_many_gNBs
+    cmap(2,:) = [0 0 1]; % blue color for PRS from gNB 1
+    cmap(3,:) = [0 1 0]; % green color for PRS from gNB 2
+    cmap(4,:) = [1 0 1]; % magenta color for PRS from gNB 3
+    % cmap(5,:) = [0 1 1]; % cyan color for PRS from gNB 4
+    % cmap(6,:) = [1 0.4 0.2]; % orange color for PRS from gNB 5
+
+    % Line widths and 
+    LineWidths = [1, 1, 1, 1, 1];
+    LineStyles = ['-', '-', '-', '-', '-'];
+    Makers = ['o', "square", '*', "diamond", '>'];
+
+    figure
+    % Plot correlation for gNBs
+    samples = (0:length(corrs{1}) - 1);
+    % time = (0:length(corrs{1}) - 1)/SampleRate;
+    my_legends = cell(1,2*n_gNBs);
+    for idx = 1:n_gNBs
+        plot(samples, abs(corrs{idx}), ...
+            'Color', cmap(idx+1,:), ...
+            'LineWidth', LineWidths(idx), ...
+            'LineStyle', LineStyles(idx));
+        my_legends{idx} = sprintf('gNB%d', idx);
+        hold on
+    end
+    %
+    for idx = 1:n_gNBs
+        corr_abs = abs(corrs{idx});
+        peak_positions = find(corr_abs == max(corr_abs), 1);
+        plot(samples(peak_positions), corr_abs(peak_positions), ...
+            'Marker', Makers(idx),...
+            'Color', cmap(idx+1,:), ...
+            'LineWidth', 1 ...
+            ); % Peaks
+        my_legends{n_gNBs+idx} = '';
+        hold on
+        text(peak_positions, corr_abs(peak_positions), strcat('  gNB',num2str(idx)));
+    end
+    legend(my_legends);
+    xlabel('Sample');
+    ylabel('Absolute Value');
 end
