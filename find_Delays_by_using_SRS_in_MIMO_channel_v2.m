@@ -104,7 +104,7 @@ for idx=1:n_gNBs
     scatters_pos{idx} = [x_temp,y_temp,z_temp] + (0.5*UE_pos + 0.5*gNBs_pos{idx}); %#ok
 end
 
-% Distances from gNBs to UE
+% Distances from UE to gNBs
 distances = zeros(1,n_gNBs);
 for idx=1:n_gNBs
     distances(idx) = sqrt(sum(abs(gNBs_pos{idx}-UE_pos).^2));
